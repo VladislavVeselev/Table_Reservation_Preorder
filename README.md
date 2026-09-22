@@ -1,1 +1,1 @@
-# System-of-prediction-for-route-Dialog-with-the-Stone-
+# Table reservations and pre‑orders at the café chain.
