@@ -1,0 +1,638 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Культурно коротко — вход</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 420px; margin: 40px auto; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    input { display: block; width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0; }
+    button { padding: 8px 14px; margin-top: 6px; cursor: pointer; }
+    .error { color: #b00020; font-size: 14px; }
+    .ok { color: #1b7f3b; font-size: 14px; }
+    .hidden { display: none; }
+    .error, .ok { white-space: pre-line; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2>Культурно коротко</h2>
+
+  <!-- Экран гостя: регистрация + вход -->
+  <div id="guestView">
+    <div class="card">
+      <h3>Регистрация</h3>
+      <input id="regUsername" placeholder="Логин" />
+      <input id="regEmail" type="email" placeholder="Email (необязательно)" />
+      <input id="regPassword" type="password" placeholder="Пароль (мин. 6)" />
+      <button onclick="register()">Зарегистрироваться</button>
+    </div>
+
+    <div class="card">
+      <h3>Вход</h3>
+      <input id="loginUsername" placeholder="Логин" />
+      <input id="loginPassword" type="password" placeholder="Пароль" />
+      <button onclick="login()">Войти</button>
+    </div>
+    <p id="guestMsg"></p>
+  </div>
+
+  <div id="pointsView" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="margin:0;">Выберите кафе</h3>
+        <div>
+          <button onclick="showMyBookings()">Мои брони</button>
+          <button onclick="logout()">Выйти</button>
+        </div>
+      </div>
+      <p id="authInfo" class="ok"></p>
+      <div id="pointsList"></div>
+      <p id="pointsMsg"></p>
+    </div>
+  </div>
+
+  <div id="bookingView" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="margin:0;">Бронирование</h3>
+        <button onclick="logout()">Выйти</button>
+      </div>
+      <p id="bookingPointInfo" class="ok"></p>
+
+      <label>Дата
+        <input id="bookingDate" type="date" />
+      </label>
+      <label>Время
+        <select id="bookingTime"></select>
+      </label>
+
+      <div id="tablesList" style="margin-top:10px;"></div>
+      <p id="bookingMsg"></p>
+
+      <div style="margin-top:10px;">
+        <button onclick="createBooking()">Забронировать</button>
+        <button onclick="backToPoints()">Назад к кафе</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="myBookingsView" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="margin:0;">Мои брони</h3>
+        <button onclick="logout()">Выйти</button>
+      </div>
+      <div id="myBookingsList"></div>
+      <p id="myBookingsMsg"></p>
+      <button onclick="backToPoints()">Назад к кафе</button>
+    </div>
+  </div>
+
+  <div id="adminPointView" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="margin:0;">Кабинет администратора точки</h3>
+        <button onclick="logout()">Выйти</button>
+      </div>
+      <p id="adminPointInfo" class="ok"></p>
+      <p id="adminPointMsg"></p>
+
+      <h4>Схема зала (US-A04)</h4>
+      <label>Дата
+        <input id="adminTablesDate" type="date" />
+      </label>
+      <label>Время
+        <select id="adminTablesTime"></select>
+      </label>
+      <div id="adminTablesList" style="margin-top:10px;"></div>
+      <p id="adminTablesMsg"></p>
+
+      <h4>Брони моей точки (US-A02)</h4>
+      <div id="adminBookingsList"></div>
+      <p id="adminBookingsMsg"></p>
+    </div>
+  </div>
+
+  <div id="adminNetworkView" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="margin:0;">Кабинет менеджера сети</h3>
+        <button onclick="logout()">Выйти</button>
+      </div>
+      <p id="adminNetworkInfo" class="ok"></p>
+      <div id="adminNetworkPoints"></div>
+      <p id="adminNetworkMsg"></p>
+    </div>
+  </div>
+
+  <script>
+    const API = "/api";
+    let selectedPointId = null;   // US-G03: выбранная точка (в памяти)
+
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp("(^|; )" + name + "=([^;]*)"));
+      return m ? decodeURIComponent(m[2]) : null;
+    }
+
+    async function ensureCsrf() {
+      await fetch(`${API}/auth/csrf/`, { credentials: "same-origin" });
+    }
+
+    async function apiPost(url, body) {
+      const token = getCookie("csrftoken") || "";
+      const res = await fetch(url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": token,
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    async function apiGet(url) {
+      const res = await fetch(url, { credentials: "same-origin" });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    function formatDrfError(data) {
+      if (!data) return "Неизвестная ошибка";
+      if (typeof data === "string") return data;
+      if (data.detail) return data.detail;
+      const lines = [];
+      for (const [field, value] of Object.entries(data)) {
+        const label = field === "non_field_errors" ? "" : `${field}: `;
+        if (Array.isArray(value)) lines.push(label + value.join("; "));
+        else if (typeof value === "object" && value !== null) {
+          for (const [sub, msgs] of Object.entries(value)) {
+            const arr = Array.isArray(msgs) ? msgs : [msgs];
+            lines.push(`${field}.${sub}: ${arr.join("; ")}`);
+          }
+        } else lines.push(label + String(value));
+      }
+      return lines.length ? lines.join("\n") : "Ошибка запроса";
+    }
+
+    // ---- Экраны ----
+    const ALL_VIEWS = [
+      "guestView", "pointsView", "bookingView", "myBookingsView",
+      "adminPointView", "adminNetworkView",
+    ];
+
+    function showView(name) {
+      for (const id of ALL_VIEWS) {
+        document.getElementById(id).classList.add("hidden");
+      }
+      document.getElementById(name).classList.remove("hidden");
+    }
+
+    function showMessage(elId, text, isError) {
+      const p = document.getElementById(elId);
+      p.textContent = text;
+      p.className = isError ? "error" : "ok";
+    }
+
+    // ---- US-G01 / US-G02 ----
+    async function register() {
+      const body = {
+        username: document.getElementById("regUsername").value.trim(),
+        email: document.getElementById("regEmail").value.trim(),
+        password: document.getElementById("regPassword").value,
+      };
+      const r = await apiPost(`${API}/auth/register/`, body);
+      if (r.ok) {
+        await onLoggedIn(r.data);
+      } else {
+        showMessage("guestMsg", formatDrfError(r.data), true);
+      }
+    }
+
+    async function login() {
+      const body = {
+        username: document.getElementById("loginUsername").value.trim(),
+        password: document.getElementById("loginPassword").value,
+      };
+      const r = await apiPost(`${API}/auth/login/`, body);
+      if (r.ok) {
+        await onLoggedIn(r.data);
+      } else {
+        showMessage("guestMsg", formatDrfError(r.data), true);
+      }
+    }
+
+    // ---- Редирект по роли (US-A01 / US-M01) ----
+    async function onLoggedIn(user) {
+      selectedPointId = null;
+
+      if (user.role === "point_admin") {
+        await loadMyPoint(user);
+        showView("adminPointView");
+      } else if (user.role === "network_manager") {
+        await loadMyNetwork(user);
+        showView("adminNetworkView");
+      } else {
+        // гость (US-G03)
+        document.getElementById("authInfo").textContent =
+          `${user.username} (${user.role_display || user.role})`;
+        await loadPoints();
+        showView("pointsView");
+      }
+    }
+
+    async function loadMyPoint(user) {
+      const info = document.getElementById("adminPointInfo");
+      const msg = document.getElementById("adminPointMsg");
+      info.textContent = `${user.username} — администратор точки`;
+      msg.textContent = "";
+      msg.className = "ok";
+
+      const r = await apiGet(`${API}/points/my/`);
+      if (!r.ok) {
+        info.textContent = `${user.username} — нет привязки к точке`;
+        msg.className = "error";
+        msg.textContent = formatDrfError(r.data);
+        return;
+      }
+      info.textContent =
+        `${user.username} — администратор точки: ${r.data.name} (${r.data.city}, ${r.data.address})`;
+      await initAdminTablesScreen();
+      await loadMyPointBookings();
+    }
+
+    async function loadMyNetwork(user) {
+      const info = document.getElementById("adminNetworkInfo");
+      const msg = document.getElementById("adminNetworkMsg");
+      const list = document.getElementById("adminNetworkPoints");
+      info.textContent = `${user.username} — менеджер сети`;
+      msg.textContent = "";
+      msg.className = "ok";
+      list.innerHTML = "";
+
+      const r = await apiGet(`${API}/networks/my/`);
+      if (!r.ok) {
+        info.textContent = `${user.username} — нет привязки к сети`;
+        msg.className = "error";
+        msg.textContent = formatDrfError(r.data);
+        return;
+      }
+      info.textContent = `${user.username} — менеджер сети: ${r.data.name}`;
+
+      if (!r.data.points.length) {
+        msg.className = "error";
+        msg.textContent = "В сети пока нет активных точек";
+        return;
+      }
+      list.innerHTML = r.data.points.map(p => `
+        <div style="border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0;">
+          <strong>${escapeHtml(p.name)}</strong><br>
+          <small>${escapeHtml(p.city)}, ${escapeHtml(p.address)}</small>
+        </div>
+      `).join("");
+    }
+
+        async function loadMyPointBookings() {
+      const list = document.getElementById("adminBookingsList");
+      const msg = document.getElementById("adminBookingsMsg");
+      list.innerHTML = "";
+      msg.textContent = "";
+      msg.className = "ok";
+
+      const r = await apiGet(`${API}/bookings/point/`);
+      if (!r.ok) {
+        msg.className = "error";
+        msg.textContent = formatDrfError(r.data);
+        return;
+      }
+      if (!r.data.length) {
+        msg.className = "ok";
+        msg.textContent = "Броней пока нет";
+        return;
+      }
+      list.innerHTML = r.data.map(b => {
+        const badge = {
+          pending:   "⏳ Ожидает",
+          confirmed: "✅ Подтверждена",
+          rejected:  "❌ Отклонена",
+          cancelled: "🚫 Отменена",
+        }[b.status] || b.status;
+        const actions = b.status === "pending"
+          ? `<div style="margin-top:6px;">
+               <button onclick="confirmBooking(${b.id})">Подтвердить</button>
+               <button onclick="rejectBooking(${b.id})">Отклонить</button>
+             </div>`
+          : "";
+        return `
+        <div style="border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0;">
+          <strong>${escapeHtml(b.user_username)}</strong> — ${escapeHtml(b.table_name)}<br>
+          ${b.date} ${b.start_time.slice(0,5)}–${b.end_time.slice(0,5)}<br>
+          Статус: <b>${badge}</b>
+          ${actions}
+        </div>`;
+      }).join("");
+    }
+
+        // ---- US-A04: схема зала (админ точки) ----
+    function buildAdminTimeOptions() {
+      const sel = document.getElementById("adminTablesTime");
+      sel.innerHTML = "";
+      for (let h = 10; h <= 21; h++) {
+        const opt = document.createElement("option");
+        opt.value = `${String(h).padStart(2, "0")}:00`;
+        opt.textContent = `${String(h).padStart(2, "0")}:00`;
+        sel.appendChild(opt);
+      }
+    }
+
+    function currentWorkingHour() {
+      const h = new Date().getHours();
+      if (h < 10) return "10:00";
+      if (h > 21) return "21:00";
+      return `${String(h).padStart(2, "0")}:00`;
+    }
+
+    async function initAdminTablesScreen() {
+      const dateInput = document.getElementById("adminTablesDate");
+      if (!dateInput.value) dateInput.value = todayISO();
+      if (!document.getElementById("adminTablesTime").options.length) {
+        buildAdminTimeOptions();
+        document.getElementById("adminTablesTime").value = currentWorkingHour();
+      }
+      dateInput.onchange = loadMyPointTables;
+      document.getElementById("adminTablesTime").onchange = loadMyPointTables;
+      await loadMyPointTables();
+    }
+
+    async function loadMyPointTables() {
+      const list = document.getElementById("adminTablesList");
+      const msg = document.getElementById("adminTablesMsg");
+      const date = document.getElementById("adminTablesDate").value;
+      const time = document.getElementById("adminTablesTime").value;
+      list.innerHTML = "";
+      msg.textContent = "";
+      msg.className = "ok";
+
+      const r = await apiGet(
+        `${API}/points/my/tables/?date=${date}&time=${time}`
+      );
+      if (!r.ok) {
+        msg.className = "error";
+        msg.textContent = formatDrfError(r.data);
+        return;
+      }
+      if (!r.data.length) {
+        msg.className = "error";
+        msg.textContent = "В этой точке пока нет столиков";
+        return;
+      }
+      list.innerHTML = r.data.map(t => {
+        const busy = t.busy_booking;
+        const style = busy
+          ? "border:1px solid #e0b4b4;background:#fdecea;"
+          : "border:1px solid #b4d4b4;background:#eaf7ea;";
+        const label = busy
+          ? `— занят: <b>${escapeHtml(busy.user_username)}</b>, ` +
+            `${busy.start_time}–${busy.end_time} (${escapeHtml(busy.status_display)})`
+          : "— свободен";
+        return `
+        <div class="admin-table-card"
+             style="${style}border-radius:8px;padding:10px;margin:6px 0;">
+          <strong>${escapeHtml(t.name)}</strong>
+          <small> (${t.seats} мест)</small><br>
+          <small>${label}</small>
+        </div>`;
+      }).join("");
+      msg.className = "ok";
+      msg.textContent = `Столиков: ${r.data.length}, свободно: ${r.data.filter(t => t.is_available).length}`;
+    }
+
+    async function confirmBooking(id) {
+      const r = await apiPost(`${API}/bookings/${id}/confirm/`, {});
+      if (r.ok) await loadMyPointBookings();
+      else showMessage("adminBookingsMsg", formatDrfError(r.data), true);
+    }
+
+    async function rejectBooking(id) {
+      const r = await apiPost(`${API}/bookings/${id}/reject/`, {});
+      if (r.ok) await loadMyPointBookings();
+      else showMessage("adminBookingsMsg", formatDrfError(r.data), true);
+    }
+
+    async function loadPoints() {
+      showMessage("pointsMsg", "Загрузка…", false);
+      const r = await apiGet(`${API}/points/`);
+      if (!r.ok) {
+        showMessage("pointsMsg", formatDrfError(r.data), true);
+        return;
+      }
+      const list = document.getElementById("pointsList");
+      if (!r.data.length) {
+        list.innerHTML = "";
+        showMessage("pointsMsg", "Пока нет доступных кафе", true);
+        return;
+      }
+      list.innerHTML = r.data.map(p => `
+        <div class="point-card" data-id="${p.id}" onclick="selectPoint(${p.id}, '${escapeHtml(p.name)}')"
+             style="border:1px solid #ddd;border-radius:8px;padding:10px;margin:8px 0;cursor:pointer;">
+          <strong>${escapeHtml(p.name)}</strong><br>
+          <small>${escapeHtml(p.city)}, ${escapeHtml(p.address)}</small>
+          ${p.phone ? `<br><small>${escapeHtml(p.phone)}</small>` : ""}
+        </div>
+      `).join("");
+      showMessage("pointsMsg", "Выберите кафе", false);
+    }
+
+    async function selectPoint(id, name) {
+      selectedPointId = id;
+      document.getElementById("bookingPointInfo").textContent = `Кафе: ${name}`;
+      await initBookingScreen();
+      showView("bookingView");
+    }
+
+        // ---- US-G04: экран бронирования ----
+    function todayISO() {
+      const d = new Date();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${d.getFullYear()}-${m}-${day}`;
+    }
+
+    function buildTimeOptions() {
+      // 10:00 … 21:00 (шаг 1 час, последняя бронь 21:00–22:00)
+      const sel = document.getElementById("bookingTime");
+      sel.innerHTML = "";
+      for (let h = 10; h <= 21; h++) {
+        const opt = document.createElement("option");
+        opt.value = `${String(h).padStart(2, "0")}:00`;
+        opt.textContent = `${String(h).padStart(2, "0")}:00`;
+        sel.appendChild(opt);
+      }
+    }
+
+    async function initBookingScreen() {
+      const dateInput = document.getElementById("bookingDate");
+      if (!dateInput.value) dateInput.value = todayISO();
+      if (!document.getElementById("bookingTime").options.length) {
+        buildTimeOptions();
+      }
+      dateInput.onchange = loadTables;
+      document.getElementById("bookingTime").onchange = loadTables;
+      await loadTables();
+    }
+
+    async function loadTables() {
+      if (!selectedPointId) return;
+      const date = document.getElementById("bookingDate").value;
+      const time = document.getElementById("bookingTime").value;
+      showMessage("bookingMsg", "Загрузка столиков…", false);
+      const r = await apiGet(
+        `${API}/points/${selectedPointId}/tables/?date=${date}&time=${time}`
+      );
+      const list = document.getElementById("tablesList");
+      list.innerHTML = "";
+      if (!r.ok) {
+        showMessage("bookingMsg", formatDrfError(r.data), true);
+        return;
+      }
+      if (!r.data.length) {
+        showMessage("bookingMsg", "В этом кафе пока нет столиков", true);
+        return;
+      }
+      list.innerHTML = r.data.map(t => `
+        <div class="table-card" data-id="${t.id}"
+             onclick="${t.is_available ? `selectTable(${t.id}, '${escapeHtml(t.name)}')` : ""}"
+             style="border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0;
+                    cursor:${t.is_available ? "pointer" : "not-allowed"};
+                    opacity:${t.is_available ? 1 : 0.5};">
+          <strong>${escapeHtml(t.name)}</strong>
+          <small> (${t.seats} мест)</small>
+          ${t.is_available ? "" : " — занят"}
+        </div>
+      `).join("");
+      selectedTableId = null;
+      showMessage("bookingMsg", "Выберите столик", false);
+    }
+
+    let selectedTableId = null;
+
+    function selectTable(id, name) {
+      selectedTableId = id;
+      document.querySelectorAll(".table-card").forEach(el => {
+        el.style.background = el.dataset.id == id ? "#e8f5e9" : "";
+      });
+      showMessage("bookingMsg", `Выбран столик: ${name}`, false);
+    }
+
+    // ---- US-G05 / US-G06: создать бронь ----
+    async function createBooking() {
+      if (!selectedPointId) {
+        showMessage("bookingMsg", "Сначала выберите кафе", true);
+        return;
+      }
+      if (!selectedTableId) {
+        showMessage("bookingMsg", "Выберите столик", true);
+        return;
+      }
+      const date = document.getElementById("bookingDate").value;
+      const time = document.getElementById("bookingTime").value;
+      const r = await apiPost(`${API}/bookings/`, {
+        point: selectedPointId,
+        table: selectedTableId,
+        date: date,
+        time: time,
+      });
+      if (r.ok) {
+        showMessage("bookingMsg",
+          `Бронь создана: ${r.data.date} ${r.data.start_time.slice(0,5)}–${r.data.end_time.slice(0,5)}, ${r.data.table_name}`,
+          false);
+        await loadTables();   // обновить занятость
+      } else if (r.status === 409) {
+        showMessage("bookingMsg", "Этот столик уже занят на выбранное время", true);
+      } else {
+        showMessage("bookingMsg", formatDrfError(r.data), true);
+      }
+    }
+
+    function backToPoints() {
+      selectedTableId = null;
+      showView("pointsView");
+    }
+
+    // ---- US-G07: мои брони ----
+    async function showMyBookings() {
+      const list = document.getElementById("myBookingsList");
+      list.innerHTML = "";
+      showMessage("myBookingsMsg", "Загрузка…", false);
+      const r = await apiGet(`${API}/bookings/my/`);
+      if (!r.ok) {
+        showMessage("myBookingsMsg", formatDrfError(r.data), true);
+        showView("myBookingsView");
+        return;
+      }
+      if (!r.data.length) {
+        showMessage("myBookingsMsg", "У вас пока нет броней", false);
+        showView("myBookingsView");
+        return;
+      }
+      list.innerHTML = r.data.map(b => {
+        const badge = {
+          pending:   "⏳ Ожидает",
+          confirmed: "✅ Подтверждена",
+          rejected:  "❌ Отклонена",
+          cancelled: "🚫 Отменена",
+        }[b.status] || b.status;
+        return `
+        <div style="border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0;">
+          <strong>${escapeHtml(b.point_name)}</strong><br>
+          <small>${escapeHtml(b.point_address)}</small><br>
+          Столик: <b>${escapeHtml(b.table_name)}</b><br>
+          ${b.date} ${b.start_time.slice(0,5)}–${b.end_time.slice(0,5)}<br>
+          Статус: <b>${badge}</b>
+        </div>`;
+      }).join("");
+      showMessage("myBookingsMsg", "", false);
+      showView("myBookingsView");
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // ---- Logout ----
+    async function logout() {
+      const r = await apiPost(`${API}/auth/logout/`, {});
+      if (r.ok) {
+        selectedPointId = null;
+        document.getElementById("pointsList").innerHTML = "";
+        document.getElementById("adminNetworkPoints").innerHTML = "";
+        document.getElementById("adminPointInfo").textContent = "";
+        document.getElementById("adminNetworkInfo").textContent = "";
+        document.getElementById("adminTablesList").innerHTML = "";
+        document.getElementById("adminTablesMsg").textContent = "";
+        document.getElementById("adminTablesDate").value = "";
+        showView("guestView");
+        showMessage("guestMsg", "Вы вышли", false);
+      } else {
+        showMessage("guestMsg", `Не удалось выйти (${r.status})`, true);
+      }
+    }
+
+    // ---- Старт ----
+    async function init() {
+      await ensureCsrf();
+      const res = await apiGet(`${API}/auth/me/`);
+      if (res.ok) {
+        await onLoggedIn(res.data);
+      } else {
+        showView("guestView");
+      }
+    }
+    init();
+  </script>
+</body>
+</html>
